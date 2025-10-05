@@ -36,7 +36,7 @@ echo -e "${GREEN}✓${NC} Directories created"
 echo ""
 echo "🐍 Step 3: Creating virtual environment..."
 if [ ! -d "venv" ]; then
-    python3 -m venv venv
+    python3.10 -m venv venv
     echo -e "${GREEN}✓${NC} Virtual environment created"
 else
     echo -e "${YELLOW}!${NC} Virtual environment already exists"
@@ -48,6 +48,8 @@ echo "🔌 Step 4: Activating virtual environment..."
 source venv/bin/activate
 echo -e "${GREEN}✓${NC} Virtual environment activated"
 
+
+
 # Upgrade pip
 echo ""
 echo "📦 Step 5: Upgrading pip..."
@@ -56,21 +58,11 @@ echo -e "${GREEN}✓${NC} Pip upgraded"
 
 # Install Python dependencies
 echo ""
-echo "📥 Step 6: Installing Python dependencies..."
+echo "📥 Step 6: Installing Python dependencies from requirements.txt..."
 echo "This may take a few minutes..."
 
-pip install opencv-python mediapipe numpy ultralytics > /dev/null 2>&1
-echo -e "${GREEN}✓${NC} Computer Vision libraries installed"
-
-pip install sounddevice pyperclip pynput > /dev/null 2>&1
-echo -e "${GREEN}✓${NC} Audio and monitoring libraries installed"
-
-pip install pymongo gridfs > /dev/null 2>&1
-echo -e "${GREEN}✓${NC} Database libraries installed"
-
-pip install flask flask-cors flask-socketio python-socketio > /dev/null 2>&1
-echo -e "${GREEN}✓${NC} Web framework installed"
-
+# Install all dependencies from requirements.txt
+pip install -r requirements.txt > /dev/null 2>&1
 echo -e "${GREEN}✓${NC} All Python dependencies installed successfully!"
 
 # Download YOLO model
@@ -160,7 +152,7 @@ pyperclip==1.8.2
 pynput==1.7.6
 
 # Database
-pymongo==4.6.1
+pymongo
 gridfs==0.1.0
 
 # Web Framework
@@ -171,6 +163,7 @@ python-socketio==5.10.0
 
 # Utilities
 python-dotenv==1.0.0
+
 EOF
 echo -e "${GREEN}✓${NC} requirements.txt created"
 
@@ -180,7 +173,7 @@ echo "🏃 Step 11: Creating run script..."
 cat > run.sh << 'EOF'
 #!/bin/bash
 source venv/bin/activate
-python app.py
+python backend/app.py
 EOF
 chmod +x run.sh
 echo -e "${GREEN}✓${NC} Run script created (run.sh)"
@@ -269,6 +262,7 @@ EOF
 chmod +x test_system.py
 echo -e "${GREEN}✓${NC} Test script created (test_system.py)"
 
+
 # Print summary
 echo ""
 echo "=================================================="
@@ -279,9 +273,11 @@ echo "📋 Next Steps:"
 echo ""
 echo "1. Activate virtual environment:"
 echo "   source venv/bin/activate"
+
 echo ""
 echo "2. Test the system:"
 echo "   python test_system.py"
+
 echo ""
 echo "3. Start the backend server:"
 echo "   python app.py"
