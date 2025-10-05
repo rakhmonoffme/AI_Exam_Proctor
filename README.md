@@ -5,7 +5,7 @@ Advanced real-time exam monitoring system with AI-powered behavioral analysis, e
 ![Python](https://img.shields.io/badge/python-v3.8+-blue.svg)
 ![Flask](https://img.shields.io/badge/flask-v3.0.0-green.svg)
 ![MongoDB](https://img.shields.io/badge/mongodb-v7.0-green.svg)
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
+
 
 ---
 
@@ -132,13 +132,15 @@ Advanced real-time exam monitoring system with AI-powered behavioral analysis, e
 
 ```bash
 # Clone the repository (or download files)
-cd ai-proctoring-system
+cd AI_Exam_Proctor
 
 # Make setup script executable
 chmod +x setup.sh
 
 # Run automated setup
 ./setup.sh
+#  Start the application
+./run.sh
 ```
 
 The script will:
@@ -147,6 +149,7 @@ The script will:
 - Download YOLO models
 - Set up MongoDB
 - Create configuration files
+- Test the system
 - Generate run scripts
 
 ### Option 2: Manual Setup
