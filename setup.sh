@@ -56,14 +56,6 @@ echo "📦 Step 5: Upgrading pip..."
 pip install --upgrade pip > /dev/null 2>&1
 echo -e "${GREEN}✓${NC} Pip upgraded"
 
-# Install Python dependencies
-echo ""
-echo "📥 Step 6: Installing Python dependencies from requirements.txt..."
-echo "This may take a few minutes..."
-
-# Install all dependencies from requirements.txt
-pip install -r requirements.txt > /dev/null 2>&1
-echo -e "${GREEN}✓${NC} All Python dependencies installed successfully!"
 
 # Download YOLO model
 echo ""
@@ -139,33 +131,45 @@ echo ""
 echo "📝 Step 10: Creating requirements.txt..."
 cat > requirements.txt << EOF
 # Computer Vision
-opencv-python==4.8.1.78
-mediapipe==0.10.8
-numpy==1.24.3
-ultralytics==8.0.221
+ultralytics>=8.2.0
+opencv-python>=4.8.0
+mediapipe>=0.10.14
+numpy>=1.24.0,<2.0
+ 
 
 # Audio Processing
 sounddevice==0.4.6
 
 # System Monitoring
-pyperclip==1.8.2
-pynput==1.7.6
+pyperclip
+pynput
 
 # Database
 pymongo
-gridfs==0.1.0
+
 
 # Web Framework
-flask==3.0.0
-flask-cors==4.0.0
-flask-socketio==5.3.5
-python-socketio==5.10.0
+flask
+flask_socketio
+flask_cors
+python-socketio
 
 # Utilities
 python-dotenv==1.0.0
 
+pybind11>=2.12
+
 EOF
 echo -e "${GREEN}✓${NC} requirements.txt created"
+# Install Python dependencies
+echo ""
+echo "📥 Step 6: Installing Python dependencies from requirements.txt..."
+echo "This may take a few minutes..."
+
+# Install all dependencies from requirements.txt
+pip install -r requirements.txt
+echo -e "${GREEN}✓${NC} All Python dependencies installed successfully!"
+
 
 # Create run script
 echo ""
@@ -262,6 +266,10 @@ EOF
 chmod +x test_system.py
 echo -e "${GREEN}✓${NC} Test script created (test_system.py)"
 
+echo ""
+echo "2. Testing the system:"
+python test_system.py
+
 
 # Print summary
 echo ""
@@ -270,21 +278,14 @@ echo -e "${GREEN}✅ Setup Complete!${NC}"
 echo "=================================================="
 echo ""
 echo "📋 Next Steps:"
-echo ""
-echo "1. Activate virtual environment:"
-echo "   source venv/bin/activate"
 
 echo ""
-echo "2. Test the system:"
-echo "   python test_system.py"
-
-echo ""
-echo "3. Start the backend server:"
+echo "1. Start the backend server:"
 echo "   python app.py"
 echo "   or"
 echo "   ./run.sh"
 echo ""
-echo "4. Access the API at:"
+echo "2. Access the API at:"
 echo "   http://localhost:5000"
 echo ""
 echo "📚 Read README.md for detailed documentation"
