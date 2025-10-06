@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Camera, Mic, Monitor, X } from 'lucide-react';
+import { Camera, Mic, Monitor, X, ExternalLink } from 'lucide-react';
 import { useToast } from '../hooks/useToast';
 import { apiService } from '../services/api';
 
@@ -9,6 +9,8 @@ export function StudentSession() {
   const navigate = useNavigate();
   const { showToast } = useToast();
   const [showPermissionModal, setShowPermissionModal] = useState(true);
+  const [showExamUrlModal, setShowExamUrlModal] = useState(false);
+  const [examUrl, setExamUrl] = useState('');
   const [permissions, setPermissions] = useState({
     camera: false,
     microphone: false,
@@ -16,8 +18,16 @@ export function StudentSession() {
   });
   const [sessionStarted, setSessionStarted] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
+  const [screenActivity, setScreenActivity] = useState({
+    tabSwitches: 0,
+    copyPasteEvents: 0,
+    windowBlurred: false,
+  });
+  
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const isEndingRef = useRef(false);
 
   const { sessionId, userId, examId } = location.state || {};
 
@@ -39,6 +49,81 @@ export function StudentSession() {
   }, [sessionStarted]);
 
   useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.hidden && sessionStarted) {
+        setScreenActivity(prev => ({
+          ...prev,
+          tabSwitches: prev.tabSwitches + 1,
+          windowBlurred: true,
+        }));
+      } else {
+        setScreenActivity(prev => ({
+          ...prev,
+          windowBlurred: false,
+        }));
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [sessionStarted]);
+
+  useEffect(() => {
+    const handleCopy = () => {
+      setScreenActivity(prev => ({
+        ...prev,
+        copyPasteEvents: prev.copyPasteEvents + 1,
+      }));
+    };
+
+    const handlePaste = () => {
+      setScreenActivity(prev => ({
+        ...prev,
+        copyPasteEvents: prev.copyPasteEvents + 1,
+      }));
+    };
+
+    document.addEventListener('copy', handleCopy);
+    document.addEventListener('paste', handlePaste);
+
+    return () => {
+      document.removeEventListener('copy', handleCopy);
+      document.removeEventListener('paste', handlePaste);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!sessionStarted || !videoRef.current || !streamRef.current) return;
+
+    if (!canvasRef.current) {
+      canvasRef.current = document.createElement('canvas');
+    }
+
+    const canvas = canvasRef.current;
+    const ctx = canvas.getContext('2d');
+
+    const captureInterval = setInterval(async () => {
+      if (isEndingRef.current) return;
+      if (videoRef.current && videoRef.current.readyState === 4) {
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+
+        ctx?.drawImage(videoRef.current, 0, 0);
+
+        const frameData = canvas.toDataURL('image/jpeg', 0.7);
+
+        try {
+          await apiService.sendFrame(sessionId, frameData, screenActivity);
+        } catch (error) {
+          console.error('Failed to send frame:', error);
+        }
+      }
+    }, 2000);
+
+    return () => clearInterval(captureInterval);
+  }, [sessionStarted, sessionId, screenActivity]);
+
+  useEffect(() => {
     const handleBeforeUnload = (e: BeforeUnloadEvent) => {
       if (sessionStarted) {
         e.preventDefault();
@@ -57,24 +142,88 @@ export function StudentSession() {
     }
 
     try {
+      console.log('Requesting camera and microphone access...');
+      
       const stream = await navigator.mediaDevices.getUserMedia({
         video: true,
         audio: true,
       });
 
+      console.log('Media stream obtained successfully');
       streamRef.current = stream;
 
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-      }
-
       setShowPermissionModal(false);
-      setSessionStarted(true);
-      showToast('Session started successfully', 'success');
+      setShowExamUrlModal(true);
 
-      document.documentElement.requestFullscreen?.();
     } catch (error) {
       showToast('Failed to access camera and microphone', 'error');
+      console.error('Media access error:', error);
+    }
+  };
+
+  const startExam = () => {
+    if (!examUrl.trim()) {
+      showToast('Please enter exam URL', 'error');
+      return;
+    }
+
+    // Add protocol if missing
+    let validUrl = examUrl.trim();
+    if (!validUrl.startsWith('http://') && !validUrl.startsWith('https://')) {
+      validUrl = 'https://' + validUrl;
+    }
+
+    // Open exam in new window (fullscreen)
+    const examWindow = window.open(validUrl, 'examWindow', 'width=1400,height=900');
+    
+    if (!examWindow) {
+      showToast('Please allow popups for this site', 'error');
+      return;
+    }
+
+    // Request fullscreen for exam window
+    setTimeout(() => {
+      examWindow.document.documentElement.requestFullscreen?.();
+    }, 500);
+
+
+    setExamUrl(validUrl);
+    setShowExamUrlModal(false);
+    setSessionStarted(true);
+    
+    // Attach stream to video AFTER state changes
+    setTimeout(() => {
+      if (videoRef.current && streamRef.current) {
+        videoRef.current.srcObject = streamRef.current;
+        videoRef.current.play()
+          .then(() => {
+            console.log('✓ Camera feed playing');
+          })
+          .catch(err => console.error('✗ Video play error:', err));
+      }
+    }, 100);
+    
+    showToast('Click "Enable Floating Camera" button', 'info');
+  };
+
+  const enablePictureInPicture = async () => {
+    if (!videoRef.current) {
+      showToast('Camera not ready', 'error');
+      return;
+    }
+
+    if (!('pictureInPictureEnabled' in document)) {
+      showToast('Picture-in-Picture not supported in your browser', 'error');
+      return;
+    }
+
+    try {
+      await videoRef.current.requestPictureInPicture();
+      console.log('✓ Picture-in-Picture enabled');
+      showToast('Camera now floating over exam window', 'success');
+    } catch (err) {
+      console.error('PIP error:', err);
+      showToast('Failed to enable floating camera', 'error');
     }
   };
 
@@ -86,22 +235,29 @@ export function StudentSession() {
   const endSession = async () => {
     const confirmed = window.confirm('Are you sure you want to end the exam session?');
     if (!confirmed) return;
-
+    isEndingRef.current = true;
     try {
-      await apiService.endSession(userId, examId);
-
+      // Close all camera feeds
       if (streamRef.current) {
         streamRef.current.getTracks().forEach(track => track.stop());
       }
 
-      if (document.fullscreenElement) {
-        document.exitFullscreen();
+      // Exit PIP if active
+      if (document.pictureInPictureElement) {
+        await document.exitPictureInPicture();
       }
+
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      // Call backend to end session
+      await apiService.endSession(sessionId, userId, examId);
 
       showToast('Session ended successfully', 'success');
       navigate('/');
     } catch (error) {
-      showToast('Failed to end session', 'error');
+      console.error('End session error:', error);
+      showToast('Session ended (with errors)', 'info');
+      navigate('/'); // Navigate anyway
     }
   };
 
@@ -115,7 +271,7 @@ export function StudentSession() {
   if (showPermissionModal) {
     return (
       <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 animate-scale-up">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
           <h2 className="text-2xl font-bold text-slate-800 mb-4">Permission Required</h2>
           <p className="text-slate-600 mb-6">This exam requires access to:</p>
 
@@ -173,59 +329,112 @@ export function StudentSession() {
     );
   }
 
-  return (
-    <div className="fixed inset-0 bg-slate-900 border-4 border-green-500">
-      <div className="absolute top-4 left-4 flex items-center gap-2 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-lg">
-        <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-        <span className="text-white text-sm font-medium">Recording</span>
-      </div>
+  if (showExamUrlModal) {
+    return (
+      <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8">
+          <h2 className="text-2xl font-bold text-slate-800 mb-4">Enter Exam URL</h2>
+          <p className="text-slate-600 mb-4">Your exam will open in a new window</p>
+          <p className="text-sm text-slate-500 mb-6">Keep this proctoring window visible during your exam</p>
 
-      <div className="absolute top-4 right-4">
+          <div className="mb-6">
+            <input
+              type="url"
+              value={examUrl}
+              onChange={(e) => setExamUrl(e.target.value)}
+              placeholder="https://forms.google.com/..."
+              className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:border-teal-500 focus:ring-2 focus:ring-teal-500 focus:ring-opacity-50 transition-all outline-none"
+              onKeyDown={(e) => e.key === 'Enter' && startExam()}
+            />
+          </div>
+
+          <button
+            onClick={startExam}
+            className="w-full px-6 py-3 bg-gradient-to-r from-green-500 to-emerald-600 text-white rounded-xl font-semibold shadow-lg hover:shadow-xl transform hover:scale-[1.02] transition-all flex items-center justify-center gap-2"
+          >
+            <ExternalLink className="w-5 h-5" />
+            <span>Open Exam & Start Proctoring</span>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="fixed inset-0 bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900" style={{ border: '4px solid #10b981' }}>
+      {/* End Session Button - Top Right */}
+      <div className="absolute top-6 right-6 z-50">
         <button
           onClick={endSession}
-          className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-6 py-2 rounded-lg font-semibold shadow-lg transition-colors"
+          className="flex items-center gap-2 bg-red-500 hover:bg-red-600 text-white px-6 py-3 rounded-xl font-semibold shadow-xl transition-colors"
         >
-          <X className="w-4 h-4" />
+          <X className="w-5 h-5" />
           <span>End Session</span>
         </button>
       </div>
 
-      <div className="absolute bottom-4 right-4 bg-black/50 backdrop-blur-sm px-4 py-2 rounded-lg">
-        <span className="text-white text-sm font-mono">{formatTime(elapsedTime)}</span>
-      </div>
-
-      <div className="absolute bottom-4 left-4">
-        <video
-          ref={videoRef}
-          autoPlay
-          muted
-          className="w-40 h-40 rounded-2xl border-2 border-white/20 shadow-2xl object-cover"
-        />
-      </div>
-
+      {/* Main Content - Center */}
       <div className="flex items-center justify-center h-full p-8">
-        <div className="bg-white rounded-2xl shadow-2xl p-12 max-w-4xl w-full">
-          <div className="text-center">
-            <h1 className="text-4xl font-bold text-slate-800 mb-6">
-              Exam Content Area
-            </h1>
-            <div className="bg-slate-50 rounded-xl p-8 mb-6">
-              <p className="text-lg text-slate-600 mb-4">
-                This is where your exam content would be displayed.
-              </p>
-              <p className="text-slate-500">
-                The AI proctoring system is actively monitoring your session.
-              </p>
+        <div className="text-center max-w-2xl">
+          <div className="mb-8">
+            <div className="w-24 h-24 bg-green-500/20 rounded-full flex items-center justify-center mx-auto mb-6 animate-pulse">
+              <Camera className="w-12 h-12 text-green-400" />
             </div>
-            <div className="grid grid-cols-2 gap-4 text-left bg-slate-50 rounded-xl p-6">
-              <div>
-                <span className="text-sm text-slate-500">Session ID:</span>
-                <p className="font-mono text-sm text-slate-800">{sessionId}</p>
+            <h1 className="text-4xl font-bold text-white mb-4">Proctoring Active</h1>
+            <p className="text-slate-300 text-xl mb-2">Your exam is open in another window</p>
+            <p className="text-slate-400">Camera feed is floating over your exam</p>
+          </div>
+
+          <div className="bg-white/10 backdrop-blur-sm rounded-2xl p-8 mb-6">
+            <div className="grid grid-cols-2 gap-6 mb-6">
+              <div className="text-left">
+                <p className="text-slate-400 text-sm mb-1">Session ID</p>
+                <p className="text-white font-mono text-sm break-all">{sessionId}</p>
               </div>
-              <div>
-                <span className="text-sm text-slate-500">Student:</span>
-                <p className="font-mono text-sm text-slate-800">{userId}</p>
+              <div className="text-left">
+                <p className="text-slate-400 text-sm mb-1">Student</p>
+                <p className="text-white font-semibold">{userId}</p>
               </div>
+            </div>
+            
+            <div className="flex items-center justify-center gap-3 text-green-400 bg-green-500/10 rounded-lg py-3 mb-4">
+              <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse" />
+              <span className="font-semibold">Recording Active</span>
+              <span className="font-mono ml-2">{formatTime(elapsedTime)}</span>
+            </div>
+
+            <button
+              onClick={enablePictureInPicture}
+              className="w-full px-4 py-3 bg-blue-500 hover:bg-blue-600 text-white rounded-lg font-semibold transition-colors flex items-center justify-center gap-2"
+            >
+              <Camera className="w-5 h-5" />
+              <span>Enable Floating Camera</span>
+            </button>
+            <p className="text-slate-400 text-xs mt-2">Click if camera isn't floating</p>
+          </div>
+
+          <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+            <p className="text-amber-300 text-sm">
+              AI monitoring is tracking your behavior. Any violations will be flagged.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Bottom Left - Camera Feed */}
+      <div className="absolute bottom-6 left-6 z-50">
+        <div className="bg-black/90 backdrop-blur-md rounded-2xl p-4 shadow-2xl border-2 border-green-500/30">
+          <div className="relative">
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-64 h-48 rounded-xl object-cover bg-slate-900"
+            />
+            <div className="absolute top-2 left-2 bg-red-500 px-3 py-1 rounded-lg flex items-center gap-2 shadow-lg">
+              <div className="w-2 h-2 bg-white rounded-full animate-pulse" />
+              <span className="text-white text-xs font-bold">LIVE</span>
             </div>
           </div>
         </div>

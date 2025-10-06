@@ -2,11 +2,9 @@ export interface Session {
   session_id: string;
   user_id: string;
   exam_id: string;
-  start_time: string;
-  end_time?: string;
-  status: 'active' | 'ended';
   total_score: number;
-  current_interval_score: number;
+  current_interval_score?: number;
+  is_running?: boolean;
 }
 
 export interface SessionStats {
@@ -18,9 +16,10 @@ export interface SessionStats {
 
 export interface Violation {
   type: string;
-  description: string;
   score: number;
   timestamp: string;
+  details: string;
+  description?: string;  
   severity: 'low' | 'medium' | 'high';
 }
 
@@ -47,16 +46,30 @@ export interface ScreenActivity {
 
 export interface MonitoringUpdate {
   session_id: string;
+  user_id: string;
   frame?: string;
-  gaze: GazeData;
-  faces: FaceData;
-  audio: AudioData;
-  screen: ScreenActivity;
+  gaze: {
+    status: string;
+    horizontal_ratio: number;
+    vertical_ratio: number;
+  };
+  faces: {
+    count: number;
+    has_multiple: boolean;
+  };
+  audio: {
+    speech_detected: boolean;
+    multiple_speakers: boolean;
+  };
+  screen: {
+    tab_switches: number;
+    copy_paste_events: number;
+  };
   interval_score: number;
   total_score: number;
   violations: Violation[];
+  status?: string;  // Make optional
   timestamp: string;
-  status: 'clear' | 'flagged';
 }
 
 export interface FlaggedInterval {
@@ -66,10 +79,13 @@ export interface FlaggedInterval {
   end_time: string;
   score: number;
   video_id: string;
+  video_path: string;
+  violations: Violation[];
 }
 
 export interface SessionDetails {
   session: Session;
   monitoring_data: MonitoringUpdate;
   flagged_intervals: FlaggedInterval[];
+  all_violations: Violation[];
 }

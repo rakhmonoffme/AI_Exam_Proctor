@@ -13,6 +13,7 @@ export function SessionMonitoring() {
   const { sessionId } = useParams<{ sessionId: string }>();
   const navigate = useNavigate();
   const { showToast } = useToast();
+  const [allViolations, setAllViolations] = useState<Violation[]>([]);
   const [sessionDetails, setSessionDetails] = useState<SessionDetails | null>(null);
   const [monitoringData, setMonitoringData] = useState<MonitoringUpdate | null>(null);
   const [loading, setLoading] = useState(true);
@@ -30,6 +31,7 @@ export function SessionMonitoring() {
         const data = await apiService.getSessionDetails(sessionId);
         setSessionDetails(data);
         setMonitoringData(data.monitoring_data);
+        setAllViolations(data.all_violations || []);  // ADD THIS LINE
       } catch (error) {
         showToast('Failed to fetch session details', 'error');
       } finally {
@@ -79,6 +81,33 @@ export function SessionMonitoring() {
         return 'text-yellow-600 bg-yellow-50 border-yellow-200';
       default:
         return 'text-blue-600 bg-blue-50 border-blue-200';
+    }
+  };
+  const getRiskLevel = (count: number) => {
+    if (count >= 4) {
+      return {
+        label: 'CRITICAL',
+        color: 'bg-red-500',
+        textColor: 'text-red-600',
+        bgColor: 'bg-red-50',
+        borderColor: 'border-red-200'
+      };
+    } else if (count >= 2) {
+      return {
+        label: 'HIGH RISK',
+        color: 'bg-orange-500',
+        textColor: 'text-orange-600',
+        bgColor: 'bg-orange-50',
+        borderColor: 'border-orange-200'
+      };
+    } else {
+      return {
+        label: 'NORMAL',
+        color: 'bg-green-500',
+        textColor: 'text-green-600',
+        bgColor: 'bg-green-50',
+        borderColor: 'border-green-200'
+      };
     }
   };
 
@@ -156,21 +185,45 @@ export function SessionMonitoring() {
           <div className="space-y-6">
             <div className="bg-gradient-to-br from-white to-slate-50 rounded-xl shadow-sm border border-slate-200 p-6">
               <div className="flex items-center justify-between mb-4">
-                <h3 className="text-lg font-bold text-slate-800">Score Dashboard</h3>
-                <div className={`w-3 h-3 rounded-full ${getStatusColor(monitoringData?.status || 'clear')}`} />
+                <h3 className="text-lg font-bold text-slate-800">Risk Assessment</h3>
+                <div className={`w-3 h-3 rounded-full ${getStatusColor(monitoringData?.status ?? 'clear')}`} />
               </div>
+              
+              {/* Flagged Intervals Count */}
               <div className="flex items-baseline gap-3 mb-2">
-                <span className="text-5xl font-bold text-slate-800">{sessionDetails.session.total_score}</span>
-                <span className="text-xl text-slate-600">/ 100</span>
+                <span className="text-5xl font-bold text-slate-800">
+                  {sessionDetails.flagged_intervals?.length ?? 0}
+                </span>
+                <span className="text-xl text-slate-600">flagged intervals</span>
               </div>
+              
+              {/* Risk Level Badge */}
+              <div className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg mb-4 ${
+                getRiskLevel(sessionDetails.flagged_intervals?.length ?? 0).bgColor
+              } ${getRiskLevel(sessionDetails.flagged_intervals?.length ?? 0).borderColor} border`}>
+                <div className={`w-2 h-2 rounded-full ${
+                  getRiskLevel(sessionDetails.flagged_intervals?.length ?? 0).color
+                }`} />
+                <span className={`font-bold text-sm ${
+                  getRiskLevel(sessionDetails.flagged_intervals?.length ?? 0).textColor
+                }`}>
+                  {getRiskLevel(sessionDetails.flagged_intervals?.length ?? 0).label}
+                </span>
+              </div>
+              
+              {/* Current Status */}
               <div className="flex items-center gap-3 text-sm mb-4">
                 <div className="flex items-center gap-1">
-                  <span className="text-slate-600">Interval:</span>
-                  <span className="font-semibold text-slate-800">{sessionDetails.session.current_interval_score}</span>
+                  <span className="text-slate-600">Current Interval:</span>
+                  <span className="font-semibold text-slate-800">
+                    {sessionDetails?.session?.current_interval_score ?? 0}
+                  </span>
                 </div>
                 <div className="w-1 h-1 bg-slate-400 rounded-full" />
-                <div className={`flex items-center gap-1 font-semibold ${monitoringData?.status === 'clear' ? 'text-green-600' : 'text-red-600'}`}>
-                  {monitoringData?.status === 'clear' ? (
+                <div className={`flex items-center gap-1 font-semibold ${
+                  (monitoringData?.status ?? 'clear') === 'clear' ? 'text-green-600' : 'text-red-600'
+                }`}>
+                  {(monitoringData?.status ?? 'clear') === 'clear' ? (
                     <>
                       <CheckCircle className="w-4 h-4" />
                       <span>CLEAR</span>
@@ -183,19 +236,28 @@ export function SessionMonitoring() {
                   )}
                 </div>
               </div>
-              <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
-                <div
-                  className={`h-full transition-all ${
-                    sessionDetails.session.total_score < 10
-                      ? 'bg-green-500'
-                      : sessionDetails.session.total_score <= 20
-                      ? 'bg-yellow-500'
-                      : 'bg-red-500'
-                  }`}
-                  style={{ width: `${Math.min(sessionDetails.session.total_score, 100)}%` }}
-                />
-              </div>
-            </div>
+  
+  {/* Progress Bar based on flagged count */}
+  <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+    <div
+      className={`h-full transition-all ${
+        (sessionDetails.flagged_intervals?.length ?? 0) === 0
+          ? 'bg-green-500'
+          : (sessionDetails.flagged_intervals?.length ?? 0) <= 3
+          ? 'bg-orange-500'
+          : 'bg-red-500'
+      }`}
+      style={{ 
+        width: `${Math.min(((sessionDetails.flagged_intervals?.length ?? 0) / 5) * 100, 100)}%` 
+      }}
+    />
+  </div>
+  <p className="text-xs text-slate-500 mt-2 text-center">
+    {sessionDetails.flagged_intervals?.length === 0 
+      ? 'No violations detected' 
+      : `${sessionDetails.flagged_intervals?.length} interval${sessionDetails.flagged_intervals?.length === 1 ? '' : 's'} flagged`}
+  </p>
+</div>
 
             <div className="grid grid-cols-2 gap-4">
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-4">
@@ -205,19 +267,19 @@ export function SessionMonitoring() {
                   </div>
                   <div>
                     <p className="text-xs text-slate-600">Gaze Detection</p>
-                    <p className={`text-sm font-bold ${monitoringData?.gaze.status === 'focused' ? 'text-green-600' : 'text-orange-600'}`}>
-                      {monitoringData?.gaze.status || 'N/A'}
+                    <p className={`text-sm font-bold ${monitoringData?.gaze?.status === 'focused' ? 'text-green-600' : 'text-orange-600'}`}>
+                      {monitoringData?.gaze?.status || 'N/A'}
                     </p>
                   </div>
                 </div>
                 <div className="text-xs text-slate-600 space-y-1">
                   <div className="flex justify-between">
                     <span>H-Ratio:</span>
-                    <span className="font-mono">{monitoringData?.gaze.horizontal_ratio.toFixed(2) || '0.00'}</span>
+                    <span className="font-mono">{monitoringData?.gaze?.horizontal_ratio.toFixed(2) || '0.00'}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>V-Ratio:</span>
-                    <span className="font-mono">{monitoringData?.gaze.vertical_ratio.toFixed(2) || '0.00'}</span>
+                    <span className="font-mono">{monitoringData?.gaze?.vertical_ratio.toFixed(2) || '0.00'}</span>
                   </div>
                 </div>
               </div>
@@ -229,12 +291,12 @@ export function SessionMonitoring() {
                   </div>
                   <div>
                     <p className="text-xs text-slate-600">Face Detection</p>
-                    <p className={`text-sm font-bold ${monitoringData?.faces.has_multiple ? 'text-red-600' : 'text-green-600'}`}>
-                      {monitoringData?.faces.count || 0} Face(s)
+                    <p className={`text-sm font-bold ${monitoringData?.faces?.has_multiple ? 'text-red-600' : 'text-green-600'}`}>
+                      {monitoringData?.faces?.count || 0} Face(s)
                     </p>
                   </div>
                 </div>
-                {monitoringData?.faces.has_multiple && (
+                {monitoringData?.faces?.has_multiple && (
                   <div className="flex items-center gap-1 text-xs text-red-600 bg-red-50 px-2 py-1 rounded">
                     <AlertCircle className="w-3 h-3" />
                     <span>Multiple faces detected</span>
@@ -250,11 +312,11 @@ export function SessionMonitoring() {
                   <div>
                     <p className="text-xs text-slate-600">Audio Analysis</p>
                     <p className="text-sm font-bold text-slate-800">
-                      {monitoringData?.audio.speech_detected ? 'Speech' : 'Silent'}
+                      {monitoringData?.audio?.speech_detected ? 'Speech' : 'Silent'}
                     </p>
                   </div>
                 </div>
-                {monitoringData?.audio.multiple_speakers && (
+                {monitoringData?.audio?.multiple_speakers && (
                   <div className="flex items-center gap-1 text-xs text-red-600 bg-red-50 px-2 py-1 rounded">
                     <AlertCircle className="w-3 h-3" />
                     <span>Multiple speakers</span>
@@ -275,11 +337,11 @@ export function SessionMonitoring() {
                 <div className="text-xs text-slate-600 space-y-1">
                   <div className="flex justify-between">
                     <span>Tab Switches:</span>
-                    <span className="font-bold text-slate-800">{monitoringData?.screen.tab_switches || 0}</span>
+                    <span className="font-bold text-slate-800">{monitoringData?.screen?.tab_switches || 0}</span>
                   </div>
                   <div className="flex justify-between">
                     <span>Copy/Paste:</span>
-                    <span className="font-bold text-slate-800">{monitoringData?.screen.copy_paste_events || 0}</span>
+                    <span className="font-bold text-slate-800">{monitoringData?.screen?.copy_paste_events || 0}</span>
                   </div>
                 </div>
               </div>
@@ -290,17 +352,20 @@ export function SessionMonitoring() {
                 <div className="flex items-center gap-2">
                   <TrendingUp className="w-5 h-5 text-slate-700" />
                   <h3 className="text-lg font-bold text-slate-800">Violations Timeline</h3>
+                  <span className="ml-auto text-sm text-slate-600">
+                    {allViolations.length} total
+                  </span>
                 </div>
               </div>
               <div className="p-4 max-h-[300px] overflow-y-auto">
-                {!monitoringData?.violations || monitoringData.violations.length === 0 ? (
+                {!allViolations || allViolations.length === 0 ? (
                   <div className="text-center py-8">
                     <CheckCircle className="w-12 h-12 text-green-500 mx-auto mb-3" />
                     <p className="text-sm text-slate-600">No violations detected</p>
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {monitoringData.violations.map((violation, idx) => (
+                    {allViolations.map((violation, idx) => (
                       <div
                         key={idx}
                         className={`p-3 rounded-lg border ${getSeverityColor(violation.severity)}`}
@@ -312,10 +377,10 @@ export function SessionMonitoring() {
                           </div>
                           <span className="text-xs font-bold">+{violation.score}</span>
                         </div>
-                        <p className="text-xs mb-1">{violation.description}</p>
+                        <p className="text-xs mb-1">{violation.description || violation.details}</p>
                         <div className="flex items-center gap-1 text-xs opacity-75">
                           <Clock className="w-3 h-3" />
-                          <span>{violation.timestamp}</span>
+                          <span>{new Date(violation.timestamp).toLocaleTimeString()}</span>
                         </div>
                       </div>
                     ))}
@@ -347,7 +412,16 @@ export function SessionMonitoring() {
                           </span>
                         </div>
                         <button
-                          onClick={() => window.open(apiService.getVideoUrl(interval.video_id), '_blank')}
+                          onClick={async () => {
+                            try {
+                              console.log('Video path:', interval.video_path);  
+                              const videoUrl = await apiService.getVideoByPath(interval.video_path);
+                              window.open(videoUrl, '_blank');
+                            } catch (error) {
+                              console.error('Video error:', error);
+                              showToast('Failed to load video', 'error');
+                            }
+                          }}
                           className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-white border border-red-200 rounded-lg text-sm font-medium text-red-700 hover:bg-red-50 transition-colors"
                         >
                           <Video className="w-4 h-4" />

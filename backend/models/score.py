@@ -57,7 +57,31 @@ class ProctoringScoreSystem:
         self.video_writer = None
         self.temp_video_file = None
         self.is_recording = False
-        self.video_fps = 10
+        self.video_fps = 15
+    
+    def _save_violation_to_db(self, violation):
+        """Save violation to database immediately"""
+        if self.session_id:
+            violation_data = {
+                'session_id': str(self.session_id),
+                'user_id': self.current_user_id,
+                'type': violation['type'],
+                'score': violation['score'],
+                'timestamp': violation['timestamp'],
+                'details': violation.get('details', ''),
+                'description': violation.get('description', violation.get('details', '')),
+                'severity': self._get_severity(violation['score'])
+            }
+            self.db.save_violation(violation_data)
+
+    def _get_severity(self, score):
+        """Determine severity based on score"""
+        if score >= 9:
+            return 'high'
+        elif score >= 4:
+            return 'medium'
+        else:
+            return 'low'
     
     def _start_new_interval(self):
         """Start a new scoring interval"""
@@ -82,9 +106,19 @@ class ProctoringScoreSystem:
         """Stop recording and return video file path"""
         if self.video_writer:
             self.video_writer.release()
+            self.video_writer = None
             self.is_recording = False
             print(f"⏹️  Stopped recording")
-            return self.temp_video_file
+            # Verify file exists before returning
+            if self.temp_video_file and os.path.exists(self.temp_video_file):
+                file_size = os.path.getsize(self.temp_video_file)
+                print(f"✓ Video file ready: {file_size} bytes")
+                return self.temp_video_file
+            else:
+                print(f"✗ Video file not created: {self.temp_video_file}")
+                return None
+        
+        print(f"✗ No video writer active")
         return None
         
     def _check_and_flag_interval(self, force=False):
@@ -100,8 +134,18 @@ class ProctoringScoreSystem:
         
         # Check if threshold exceeded (immediate flag)
         if self.interval_score >= self.FLAG_THRESHOLD:
-            
+            if not self.is_recording:
+                print(f"✗ No active recording to flag")
+                return False
             video_file = self._stop_video_recording()
+            time.sleep(1)
+            
+            if not video_file or not os.path.exists(video_file):
+                print(f"✗ Video file missing: {video_file}")
+                self._start_new_interval()
+                return False
+            print(f"✓ Video file exists: {video_file} ({os.path.getsize(video_file)} bytes)")
+            
             # Save video to DB
             flag_data = {
                 'interval_start': datetime.fromtimestamp(self.interval_start_time).isoformat(),
@@ -111,11 +155,14 @@ class ProctoringScoreSystem:
                 'flagged_at': datetime.now().isoformat()
             }
             
-            # Save to MongoDB with video
-            if video_file and self.session_id:
+            # Save to MongoDB with video - THIS MOVES THE FILE
+            if video_file and self.session_id and os.path.exists(video_file):  # ADD os.path.exists check
                 flag_data['session_id'] = str(self.session_id)
                 flag_data['user_id'] = self.current_user_id 
-                self.db.save_flagged_interval(flag_data, video_file)
+                self.db.save_flagged_interval(flag_data, video_file)  # This moves the file
+                print(f"✓ Video saved via database method")
+            elif video_file:
+                print(f"✗ Video file not found: {video_file}")
                 
             
             self.flags.append(flag_data)
@@ -143,10 +190,12 @@ class ProctoringScoreSystem:
                 'type': 'gaze_distracted',
                 'score': score,
                 'timestamp': datetime.now().isoformat(),
-                'details': f"Looking {result['where']}" if result['where'] else "focused away"
+                'details': f"Looking {result['where']}" if result['where'] else "focused away",
+                
             }
             self.all_violations.append(violation)
             self.interval_violations.append(violation)
+            self._save_violation_to_db(violation) 
             
             # Check for immediate flag
             self._check_and_flag_interval()
@@ -172,28 +221,30 @@ class ProctoringScoreSystem:
             score = self.SCORES['multiple_faces']
             self.total_score += score
             self.interval_score += score
-            violations = {
+            violation = {
                 'type': 'multiple_faces',
                 'score': score,
                 'timestamp': datetime.now().isoformat(),
                 'details': f"{result['num_faces']} faces detected"
             }
-            self.all_violations.append(violations)
-            self.interval_violations.append(violations)
+            self.all_violations.append(violation)
+            self.interval_violations.append(violation)
+            self._save_violation_to_db(violation) 
             
             
         if result['no_face']:
             score = self.SCORES['no_face']
             self.total_score += score
             self.interval_score += score
-            violations = {
+            violation = {
                 'type': 'no_face',
                 'score': score,
                 'timestamp': datetime.now().isoformat(),
                 'details': "No face detected"
             }
-            self.all_violations.append(violations)
-            self.interval_violations.append(violations)
+            self.all_violations.append(violation)
+            self.interval_violations.append(violation)
+            self._save_violation_to_db(violation) 
             
             
         # Check for immediate flag
@@ -230,6 +281,7 @@ class ProctoringScoreSystem:
             }
             self.all_violations.append(violation)
             self.interval_violations.append(violation)
+            self._save_violation_to_db(violation)
             
             if result['multiple_speakers_detected']:
                 # Multiple voices
@@ -244,6 +296,7 @@ class ProctoringScoreSystem:
                 }
                 self.all_violations.append(violation)
                 self.interval_violations.append(violation)
+                self._save_violation_to_db(violation)
         
         self.total_score += score
         self.interval_score += score
@@ -289,6 +342,7 @@ class ProctoringScoreSystem:
             }
             self.all_violations.append(violation)
             self.interval_violations.append(violation)
+            self._save_violation_to_db(violation)
         
         # Score copy/paste events
         if result['copy_paste_events'] > 0:
@@ -303,6 +357,7 @@ class ProctoringScoreSystem:
             }
             self.all_violations.append(violation)
             self.interval_violations.append(violation)
+            self._save_violation_to_db(violation)
         
         self.total_score += score
         self.interval_score += score
@@ -521,11 +576,23 @@ class ProctoringScoreSystem:
     
     def close(self):
         """Close all detectors and release resources"""
-        self.gaze_detector.close()
+        # Stop screen monitoring first (stops background threads)
         if self.screen_monitor.is_monitoring:
             self.screen_monitor.stop_monitoring()
+        
+        # Release video writer
         if self.video_writer:
             self.video_writer.release()
+            self.video_writer = None
+        
+        # Close detectors
+        self.gaze_detector.close()
+        
+        # IMPORTANT: Close database LAST after all background operations stopped
+        # Wait a moment to ensure any pending database operations complete
+        import time
+        time.sleep(0.5)
+        
         self.db.close()
         print("All detectors closed")
 

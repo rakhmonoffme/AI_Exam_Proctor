@@ -21,6 +21,7 @@ export function Landing() {
     try {
       const examId = sessionId.trim() || `exam_${Date.now()}`;
       const session = await apiService.createSession(studentName, examId);
+      console.log('Backend response:', session); 
       navigate('/student/session', {
         state: {
           sessionId: session.session_id,
@@ -29,6 +30,7 @@ export function Landing() {
         }
       });
     } catch (error) {
+      console.error('Error:', error); 
       showToast('Failed to start exam session', 'error');
     } finally {
       setLoading(false);

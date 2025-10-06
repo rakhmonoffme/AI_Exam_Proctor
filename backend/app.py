@@ -7,10 +7,9 @@ import base64
 import json
 from datetime import datetime
 import time
+
 import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
-
-
 from models.score import ProctoringScoreSystem
 from database.db import ProctoringDatabase
 
@@ -28,96 +27,25 @@ class SessionMonitor:
         self.exam_id = exam_id
         self.scorer = ProctoringScoreSystem()
         self.is_running = False
-        self.thread = None
         self.session_id = None
         
     def start(self):
-        """Start monitoring in background thread"""
+        """Start monitoring session (web-based, frames come from client)"""
         self.is_running = True
-        self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
-        self.thread.start()
+        self.scorer.current_user_id = self.user_id
+        session_data = {
+            'user_id': self.user_id,
+            'exam_id': self.exam_id,
+            'start_time': datetime.now().isoformat()
+        }
+        self.session_id = self.scorer.db.create_session(session_data)
+        self.scorer.session_id = self.session_id
+        self.scorer._start_new_interval()
+        self.scorer.screen_monitor.start_monitoring()
         
-    def _monitor_loop(self):
-        """Main monitoring loop"""
-        try:
-            # Start monitoring (modified to not block)
-            self.scorer.current_user_id = self.user_id
-            session_data = {
-                'user_id': self.user_id,
-                'exam_id': self.exam_id,
-                'start_time': datetime.now().isoformat()
-            }
-            self.session_id = self.scorer.db.create_session(session_data)
-            self.scorer.session_id = self.session_id
-            self.scorer._start_new_interval()
-            self.scorer.screen_monitor.start_monitoring()
-            
-            # Open webcam
-            cap = cv2.VideoCapture(0)
-            frame_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-            frame_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-            
-            check_count = 0
-            last_check_time = time.time()
-            
-            while self.is_running:
-                ret, frame = cap.read()
-                
-                if ret:
-                    # Start video recording
-                    if not self.scorer.is_recording:
-                        self.scorer._start_video_recording(frame_width, frame_height)
-                    
-                    if self.scorer.video_writer:
-                        self.scorer.video_writer.write(frame)
-                    
-                    # Encode frame for streaming
-                    _, buffer = cv2.imencode('.jpg', frame)
-                    frame_base64 = base64.b64encode(buffer).decode('utf-8')
-                    
-                    # Run detection checks every 10 seconds
-                    current_time = time.time()
-                    if current_time - last_check_time >= 10:
-                        gaze_result = self.scorer.analyze_gaze(frame)
-                        face_result = self.scorer.analyze_faces(frame)
-                        
-                        # Emit real-time data to frontend
-                        socketio.emit('monitoring_update', {
-                            'user_id': self.user_id,
-                            'session_id': str(self.session_id),
-                            'frame': frame_base64,
-                            'gaze': gaze_result,
-                            'faces': face_result,
-                            'interval_score': self.scorer.interval_score,
-                            'total_score': self.scorer.total_score,
-                            'violations': self.scorer.interval_violations,
-                            'timestamp': datetime.now().isoformat()
-                        }, room=str(self.session_id))
-                        
-                        check_count += 1
-                        last_check_time = current_time
-                    
-                    # Check interval completion
-                    elapsed = time.time() - self.scorer.interval_start_time
-                    if elapsed >= self.scorer.INTERVAL_DURATION:
-                        if self.scorer.interval_score < self.scorer.FLAG_THRESHOLD:
-                            video_file = self.scorer._stop_video_recording()
-                            if video_file and os.path.exists(video_file):
-                                os.remove(video_file)
-                        self.scorer._start_new_interval()
-                    
-                    time.sleep(0.03)  # ~30 FPS
-            
-            cap.release()
-            
-        except Exception as e:
-            print(f"Error in monitoring loop: {e}")
-            
     def stop(self):
         """Stop monitoring"""
         self.is_running = False
-        if self.thread:
-            self.thread.join(timeout=5)
         
         # Generate final report
         report = self.scorer.generate_report()
@@ -126,7 +54,6 @@ class SessionMonitor:
         
         self.scorer.close()
         return report
-
 
 # ============= REST API ENDPOINTS =============
 @app.route('/')
@@ -151,7 +78,9 @@ def receive_frame(session_id):
             break
     
     if not monitor:
-        return jsonify({'error': 'Session not found'}), 404
+        return jsonify({'error': 'Session not found'}), 200
+    if not monitor.is_running:
+        return jsonify({'success': True, 'message': 'Session ending'}), 201
     
     try:
         import numpy as np
@@ -269,16 +198,34 @@ def end_session():
         return jsonify({'error': 'Session not found'}), 404
     
     monitor = active_sessions[session_key]
-    report = monitor.stop()
     
-    del active_sessions[session_key]
-    
-    return jsonify({
-        'success': True,
-        'report': report,
-        'message': 'Session ended successfully'
-    })
-
+    try:
+        report = monitor.stop()
+        del active_sessions[session_key]
+        
+        # Convert ObjectId to string in report
+        if '_id' in report:
+            report['_id'] = str(report['_id'])
+        if 'session_id' in report:
+            report['session_id'] = str(report['session_id'])
+        
+        # Convert ObjectId in flagged intervals
+        if 'flagged_intervals' in report:
+            for interval in report['flagged_intervals']:
+                if '_id' in interval:
+                    interval['_id'] = str(interval['_id'])
+                if 'session_id' in interval:
+                    interval['session_id'] = str(interval['session_id'])
+                if 'video_id' in interval:
+                    interval['video_id'] = str(interval['video_id'])
+        
+        return jsonify({
+            'success': True,
+            'message': 'Session ended successfully'
+        })
+    except Exception as e:
+        print(f"Error ending session: {e}")
+        return jsonify({'error': str(e)}), 500
 @app.route('/api/sessions/active', methods=['GET'])
 def get_active_sessions():
     """Get all active sessions"""
@@ -293,7 +240,7 @@ def get_active_sessions():
             'is_running': monitor.is_running
         })
     
-    return jsonify({'sessions': sessions, 'count': len(sessions)})
+    return jsonify(sessions)
 
 @app.route('/api/sessions/stats', methods=['GET'])
 def get_session_stats():
@@ -309,10 +256,9 @@ def get_session_stats():
     }
     
     return jsonify(stats)
-
 @app.route('/api/session/<session_id>/details', methods=['GET'])
 def get_session_details(session_id):
-    """Get details of a specific session"""
+    """Get details of a specific session with ALL violations and flagged intervals"""
     from bson.objectid import ObjectId
     
     try:
@@ -320,19 +266,35 @@ def get_session_details(session_id):
         if not session:
             return jsonify({'error': 'Session not found'}), 404
         
-        # Get flagged intervals for this session
-        flagged = list(db.flagged_intervals.find({'session_id': session_id}))
+        # Get ALL violations for this session (from violations collection)
+        all_violations = db.get_session_violations(session_id)
+        
+        # Get flagged intervals with video paths
+        flagged = db.get_session_flagged_intervals(session_id)
         
         # Convert ObjectId to string
         session['_id'] = str(session['_id'])
+        
+        # Format flagged intervals for frontend
+        formatted_flagged = []
         for flag in flagged:
-            flag['_id'] = str(flag['_id'])
-            if 'video_id' in flag:
-                flag['video_id'] = str(flag['video_id'])
+            formatted_flagged.append({
+                'interval_id': str(flag['_id']),
+                'start_time': flag.get('interval_start', ''),
+                'end_time': flag.get('interval_end', ''),
+                'score': flag.get('score', 0),
+                'video_path': flag.get('video_path', ''),  # File path instead of GridFS ID
+                'violations': flag.get('violations', [])
+            })
         
         return jsonify({
             'session': session,
-            'flagged_intervals': flagged
+            'all_violations': all_violations,  # NEW: All violations from entire session
+            'flagged_intervals': formatted_flagged,
+            'monitoring_data': {
+                'total_score': session.get('total_score', 0),
+                'interval_score': session.get('current_interval_score', 0)
+            }
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 500
@@ -362,7 +324,39 @@ def get_video(video_id):
         return jsonify({'error': 'Video not found'}), 404
     except Exception as e:
         return jsonify({'error': str(e)}), 500
-
+@app.route('/api/video/path', methods=['POST'])
+def get_video_by_path():
+    """Get video from file system by path"""
+    data = request.json
+    video_path = data.get('video_path')
+    
+    print(f"=== VIDEO REQUEST ===")
+    print(f"Requested path: {video_path}")
+    
+    if not video_path:
+        return jsonify({'error': 'video_path is required'}), 400
+    
+    try:
+        # Security: Ensure path is within flagged_videos directory
+        abs_path = os.path.abspath(video_path)
+        base_dir = os.path.abspath('flagged_videos')
+        
+        print(f"Absolute path: {abs_path}")
+        print(f"Base directory: {base_dir}")
+        print(f"File exists: {os.path.exists(abs_path)}")
+        
+        if not abs_path.startswith(base_dir):
+            return jsonify({'error': 'Invalid video path - security check failed'}), 403
+        
+        if os.path.exists(abs_path):
+            print(f"✓ Serving video from: {abs_path}")
+            return send_file(abs_path, mimetype='video/mp4')
+        else:
+            print(f"✗ File not found at: {abs_path}")
+            return jsonify({'error': 'File not found'}), 404
+    except Exception as e:
+        print(f"✗ Error: {e}")
+        return jsonify({'error': str(e)}), 500
 @app.route('/api/video/file/<path:filepath>', methods=['GET'])
 def get_video_file(filepath):
     """Get video from file system"""

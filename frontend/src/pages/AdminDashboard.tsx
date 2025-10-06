@@ -14,6 +14,10 @@ export function AdminDashboard() {
   const [selectedSession, setSelectedSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [sessionFlagCounts, setSessionFlagCounts] = useState<Record<string, number>>({});
+  const [showSessionsModal, setShowSessionsModal] = useState(false);
+  const [allSessions, setAllSessions] = useState<any[]>([]);
+  const [loadingSessions, setLoadingSessions] = useState(false);
 
   const fetchData = async (isRefresh = false) => {
     if (isRefresh) setRefreshing(true);
@@ -26,6 +30,21 @@ export function AdminDashboard() {
       ]);
       setStats(statsData);
       setActiveSessions(sessionsData);
+      
+      // Fetch flagged interval counts for each session
+      const flagCounts: Record<string, number> = {};
+      await Promise.all(
+        sessionsData.map(async (session) => {
+          try {
+            const details = await apiService.getSessionDetails(session.session_id);
+            flagCounts[session.session_id] = details.flagged_intervals?.length ?? 0;
+          } catch (error) {
+            flagCounts[session.session_id] = 0;
+          }
+        })
+      );
+      setSessionFlagCounts(flagCounts);
+      
       if (isRefresh) {
         showToast('Data refreshed', 'success');
       }
@@ -36,7 +55,6 @@ export function AdminDashboard() {
       setRefreshing(false);
     }
   };
-
   useEffect(() => {
     fetchData();
 
@@ -47,10 +65,26 @@ export function AdminDashboard() {
     return () => clearInterval(interval);
   }, []);
 
-  const getScoreColor = (score: number) => {
-    if (score < 10) return 'text-green-600 bg-green-50';
-    if (score <= 20) return 'text-yellow-600 bg-yellow-50';
-    return 'text-red-600 bg-red-50';
+  const getRiskLevel = (count: number) => {
+    if (count >= 4) {
+      return {
+        label: 'CRITICAL',
+        color: 'text-red-600 bg-red-50',
+        dotColor: 'bg-red-500'
+      };
+    } else if (count >= 2) {
+      return {
+        label: 'HIGH RISK',
+        color: 'text-orange-600 bg-orange-50',
+        dotColor: 'bg-orange-500'
+      };
+    } else {
+      return {
+        label: 'NORMAL',
+        color: 'text-green-600 bg-green-50',
+        dotColor: 'bg-green-500'
+      };
+    }
   };
 
   const viewSessionDetails = (sessionId: string) => {
@@ -146,43 +180,53 @@ export function AdminDashboard() {
                 </div>
               ) : (
                 <div className="space-y-3 max-h-[600px] overflow-y-auto">
-                  {activeSessions.map((session) => (
-                    <div
-                      key={session.session_id}
-                      onClick={() => setSelectedSession(session)}
-                      className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
-                        selectedSession?.session_id === session.session_id
-                          ? 'border-teal-500 bg-teal-50'
-                          : 'border-slate-200 hover:border-slate-300 bg-white'
-                      }`}
-                    >
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2 mb-1">
-                            <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
-                            <span className="font-semibold text-slate-800">{session.user_id}</span>
-                          </div>
-                          <p className="text-sm text-slate-600">
-                            Exam: <span className="font-mono">{session.exam_id}</span>
-                          </p>
-                        </div>
-                        <div className={`px-3 py-1 rounded-lg text-sm font-semibold ${getScoreColor(session.total_score)}`}>
-                          Score: {session.total_score}
-                        </div>
-                      </div>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          viewSessionDetails(session.session_id);
-                        }}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium text-slate-700 transition-colors"
+                  {activeSessions.map((session) => {
+                    const flagCount = sessionFlagCounts[session.session_id] ?? 0;
+                    const risk = getRiskLevel(flagCount);
+                    
+                    return (
+                      <div
+                        key={session.session_id}
+                        onClick={() => setSelectedSession(session)}
+                        className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${
+                          selectedSession?.session_id === session.session_id
+                            ? 'border-teal-500 bg-teal-50'
+                            : 'border-slate-200 hover:border-slate-300 bg-white'
+                        }`}
                       >
-                        <Eye className="w-4 h-4" />
-                        <span>View Details</span>
-                        <ChevronRight className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2 mb-1">
+                              <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
+                              <span className="font-semibold text-slate-800">{session.user_id}</span>
+                            </div>
+                            <p className="text-sm text-slate-600">
+                              Exam: <span className="font-mono">{session.exam_id}</span>
+                            </p>
+                          </div>
+                          <div className="flex flex-col items-end gap-2">
+                            <div className={`px-3 py-1 rounded-lg text-sm font-semibold ${risk.color}`}>
+                              {risk.label}
+                            </div>
+                            <div className="text-xs text-slate-600">
+                              {flagCount} interval{flagCount !== 1 ? 's' : ''}
+                            </div>
+                          </div>
+                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            viewSessionDetails(session.session_id);
+                          }}
+                          className="w-full flex items-center justify-center gap-2 px-4 py-2 bg-slate-100 hover:bg-slate-200 rounded-lg text-sm font-medium text-slate-700 transition-colors"
+                        >
+                          <Eye className="w-4 h-4" />
+                          <span>View Details</span>
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -227,23 +271,43 @@ export function AdminDashboard() {
                   </div>
 
                   <div className="bg-gradient-to-br from-slate-50 to-white rounded-xl p-4 border border-slate-200">
-                    <h3 className="font-semibold text-slate-800 mb-3">Violation Score</h3>
-                    <div className="flex items-baseline gap-2">
-                      <span className="text-4xl font-bold text-slate-800">{selectedSession.total_score}</span>
-                      <span className="text-sm text-slate-600">/ 100</span>
+                    <h3 className="font-semibold text-slate-800 mb-3">Risk Assessment</h3>
+                    <div className="flex items-baseline gap-2 mb-2">
+                      <span className="text-4xl font-bold text-slate-800">
+                        {sessionFlagCounts[selectedSession.session_id] ?? 0}
+                      </span>
+                      <span className="text-sm text-slate-600">flagged intervals</span>
                     </div>
+                    
+                    {/* Risk Badge */}
+                    <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-sm font-semibold mb-3 ${
+                      getRiskLevel(sessionFlagCounts[selectedSession.session_id] ?? 0).color
+                    }`}>
+                      <div className={`w-2 h-2 rounded-full ${
+                        getRiskLevel(sessionFlagCounts[selectedSession.session_id] ?? 0).dotColor
+                      }`} />
+                      {getRiskLevel(sessionFlagCounts[selectedSession.session_id] ?? 0).label}
+                    </div>
+                    
                     <div className="mt-3 h-2 bg-slate-200 rounded-full overflow-hidden">
                       <div
                         className={`h-full transition-all ${
-                          selectedSession.total_score < 10
+                          (sessionFlagCounts[selectedSession.session_id] ?? 0) === 0
                             ? 'bg-green-500'
-                            : selectedSession.total_score <= 20
-                            ? 'bg-yellow-500'
+                            : (sessionFlagCounts[selectedSession.session_id] ?? 0) <= 3
+                            ? 'bg-orange-500'
                             : 'bg-red-500'
                         }`}
-                        style={{ width: `${Math.min(selectedSession.total_score, 100)}%` }}
+                        style={{ 
+                          width: `${Math.min(((sessionFlagCounts[selectedSession.session_id] ?? 0) / 5) * 100, 100)}%` 
+                        }}
                       />
                     </div>
+                    <p className="text-xs text-slate-500 mt-2">
+                      {(sessionFlagCounts[selectedSession.session_id] ?? 0) === 0
+                        ? 'No violations detected'
+                        : `${sessionFlagCounts[selectedSession.session_id]} interval${(sessionFlagCounts[selectedSession.session_id] ?? 0) === 1 ? '' : 's'} flagged`}
+                    </p>
                   </div>
 
                   <button

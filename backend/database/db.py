@@ -23,6 +23,70 @@ class ProctoringDatabase:
         
         print(f"✓ Connected to MongoDB: {db_name}")
     
+    def save_violation(self, violation_data):
+        """
+        Save a single violation to the database
+        
+        Args:
+            violation_data: Dictionary with violation information including session_id
+            
+        Returns:
+            Inserted document ID
+        """
+        try:
+            violation_data['saved_at'] = datetime.now().isoformat()
+            result = self.violations.insert_one(violation_data)
+            return result.inserted_id
+        except Exception as e:
+            print(f"✗ Error saving violation: {e}")
+            return None
+
+    def get_session_violations(self, session_id):
+        """
+        Get all violations for a specific session
+        
+        Args:
+            session_id: Session document ID
+            
+        Returns:
+            List of violations sorted by timestamp
+        """
+        try:
+            violations = list(self.violations.find({'session_id': str(session_id)})
+                            .sort('timestamp', -1))  # Most recent first
+            
+            # Convert ObjectId to string
+            for v in violations:
+                v['_id'] = str(v['_id'])
+            
+            return violations
+        except Exception as e:
+            print(f"✗ Error retrieving session violations: {e}")
+            return []
+
+    def get_session_flagged_intervals(self, session_id):
+        """
+        Get all flagged intervals for a session
+        
+        Args:
+            session_id: Session document ID
+            
+        Returns:
+            List of flagged intervals with video paths
+        """
+        try:
+            intervals = list(self.flagged_intervals.find({'session_id': str(session_id)})
+                        .sort('saved_at', -1))
+            
+            # Convert ObjectId to string
+            for interval in intervals:
+                interval['_id'] = str(interval['_id'])
+            
+            return intervals
+        except Exception as e:
+            print(f"✗ Error retrieving flagged intervals: {e}")
+            return []
+    
     def save_flagged_interval(self, flag_data, video_file_path, folder_path='flagged_videos'):
         """
         Save flagged interval with video organized by user
@@ -51,6 +115,8 @@ class ProctoringDatabase:
             if os.path.exists(video_file_path):
                 os.rename(video_file_path, permanent_path)
                 print(f"✓ Video saved to: {permanent_path}")
+            else:
+                print(f"✗ Source video not found: {video_file_path}")
             
             # Add video reference
             flag_data['video_path'] = permanent_path
